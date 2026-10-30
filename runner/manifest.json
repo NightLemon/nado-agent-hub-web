@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "version": "a935daf1fe842f10b2f757380f41ca4230c2920e",
+  "artifacts": [
+    {
+      "name": "nado-runner.mjs",
+      "sha256": "a31a169ff0656491324df6a12ff6796e663541842813ec4cdeabbae8936a5df9"
+    },
+    {
+      "name": "nado-supervisor.mjs",
+      "sha256": "2ae24271660ef54789af5ba0bc2076450996b23f82f8b1801adab896f9dff9e7"
+    },
+    {
+      "name": "nado-storage.mjs",
+      "sha256": "bf87ac8f8dfbbc774f25181e2392b966cd9dd7de5ca2f64eeb437ea6acd6bb44"
+    },
+    {
+      "name": "fake-agent.mjs",
+      "sha256": "3f0787ef0f9022c68210323ba3036c866f6fd15020eb4e27af3f87bd6820c312"
+    }
+  ]
+}
