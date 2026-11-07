@@ -4386,7 +4386,13 @@ var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
   external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
 ]);
 var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
-var CatalogBeginSchema = external_exports.object({ connectionId: id6, snapshotId: id6, expectedVersion: external_exports.number().int().nonnegative(), mode: external_exports.enum(["snapshot", "delta"]) }).strict();
+var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
+var CatalogBeginSchema = external_exports.union([
+  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
+  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
+  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
+]);
+var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
 var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
 var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
 

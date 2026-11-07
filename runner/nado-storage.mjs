@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
-const VERSIONS = { hub: 24, runner: 3, openclaw: 1, 'native-storage':1 };
+const VERSIONS = { hub: 25, runner: 3, openclaw: 1, 'native-storage':1 };
 const TABLES = { hub: ['machines', 'sessions', 'turns', 'events'], runner: ['runs', 'outbox', 'imports'], openclaw: ['cursors', 'pending', 'seen', 'metadata'], 'native-storage':['directories'] };
 const quote = (name) => `"${name.replaceAll('"', '""')}"`;
 

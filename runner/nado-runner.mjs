@@ -8138,9 +8138,23 @@ var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
   external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
 ]);
 var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
-var CatalogBeginSchema = external_exports.object({ connectionId: id6, snapshotId: id6, expectedVersion: external_exports.number().int().nonnegative(), mode: external_exports.enum(["snapshot", "delta"]) }).strict();
+var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
+var CatalogBeginSchema = external_exports.union([
+  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
+  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
+  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
+]);
+var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
 var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
 var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
+function catalogDefinition(entries, roots) {
+  const definitions = entries.map((entry) => {
+    if (entry.kind !== "hardware") return entry;
+    const { observedAt: _time, availableCapacity: _available, ...definition } = entry;
+    return definition;
+  }).sort((a, b) => a.id.localeCompare(b.id));
+  return JSON.stringify({ entries: definitions, roots: [...roots].sort((a, b) => a.rootId.localeCompare(b.rootId)) }, (_key, value) => value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
+}
 
 // packages/protocol/src/artifacts.ts
 var DEFAULT_ARTIFACT_MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -12107,8 +12121,15 @@ var CatalogPublisher = class {
     observed.entries.push(...additional);
     signal.throwIfAborted();
     const previous = this.previous;
-    let delta = previous?.connectionId === current.connectionId && previous.version === current.currentVersion && previous.roots.every((r) => r.state === "complete") && observed.roots.every((r) => r.state === "complete");
+    const modern = current.contentIdentity === 1;
+    const sameBase = previous?.connectionId === current.connectionId && (modern ? previous.contentId === current.contentId : previous.legacyStamp === current.currentVersion);
     const map = new Map(observed.entries.map((e) => [e.id, e]));
+    if (modern && sameBase && catalogDefinition([...previous.entries.values()], previous.roots) === catalogDefinition(observed.entries, observed.roots)) {
+      await this.request("/renew", signal, { connectionId: current.connectionId, contentId: current.contentId, observations: observed.entries.filter((e) => e.kind === "hardware") });
+      this.previous = { ...previous, entries: map, roots: observed.roots };
+      return;
+    }
+    let delta = sameBase && previous.roots.every((r) => r.state === "complete") && observed.roots.every((r) => r.state === "complete");
     let entries = delta ? observed.entries.filter((e) => JSON.stringify(previous.entries.get(e.id)) !== JSON.stringify(e)) : observed.entries;
     let deletedIds = delta ? [...previous.entries.keys()].filter((id8) => !map.has(id8)) : [];
     if (entries.length + deletedIds.length > CATALOG_LIMITS.deviceEntries) {
@@ -12117,7 +12138,7 @@ var CatalogPublisher = class {
       deletedIds = [];
     }
     const snapshotId = randomUUID5(), identity = { connectionId: current.connectionId, snapshotId };
-    await this.request("/begin", signal, { ...identity, expectedVersion: current.currentVersion, mode: delta ? "delta" : "snapshot" });
+    await this.request("/begin", signal, { ...identity, ...modern ? { expectedContentId: current.contentId ?? null } : { expectedVersion: current.currentVersion }, mode: delta ? "delta" : "snapshot" });
     let page = 0;
     const pageSize = Math.min(CATALOG_LIMITS.pageEntries, 50);
     let entryOffset = 0, deletedOffset = 0;
@@ -12136,8 +12157,8 @@ var CatalogPublisher = class {
       await this.request("/pages", signal, { ...identity, page: page++, entries: pageEntries, deletedIds: pageDeleted });
     } while (entryOffset < entries.length || deletedOffset < deletedIds.length);
     const result = await this.request("/commit", signal, { ...identity, pageCount: page, roots: observed.roots });
-    this.previous = { connectionId: current.connectionId, version: result.version, entries: map, roots: observed.roots };
-    this.log(`resource catalog registered v${result.version}: ${map.size} entries, ${observed.roots.filter((r) => r.state !== "complete").length} incomplete roots`);
+    this.previous = { connectionId: current.connectionId, contentId: result.contentId, legacyStamp: result.version, entries: map, roots: observed.roots };
+    if (previous?.connectionId !== current.connectionId) this.log(`resource catalog registered: ${map.size} entries, ${observed.roots.filter((r) => r.state !== "complete").length} incomplete roots`);
   }
 };
 
