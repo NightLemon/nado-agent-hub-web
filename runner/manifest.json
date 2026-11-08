@@ -1,26 +1,26 @@
 {
   "schemaVersion": 1,
-  "version": "dev.batch004.20261107",
+  "version": "owner-delegation-20261108",
   "artifacts": [
     {
       "name": "nado-runner.mjs",
-      "sha256": "a779dc4145f108430e8d1a31c7873220bf2bbad53a58c218b9b4ac99cbd73ba1"
+      "sha256": "770ac92937a25789932e08025b9fc3cc1ff34d3dafd58fde6d2cd326856b32c2"
     },
     {
       "name": "nado-supervisor.mjs",
-      "sha256": "eab421c0ee258a2cb71808948f6d6e85895727adbe076f8c753f2093b7d9f010"
+      "sha256": "ce47b5b4566c5b076de1eb56aed0b74c4e7b9262fbac360fb81560d7aefd2960"
     },
     {
       "name": "nado-readonly.mjs",
-      "sha256": "660775255f3a8b986e5b1abf5a1df945271cccd8ada257fee7d63ddd2d0d7f00"
+      "sha256": "ba84f601f511dfcfe821dc5bbd7aa5a6b110aaf54e0e641d06bd42e8625529de"
     },
     {
       "name": "nado-operation.mjs",
-      "sha256": "a57490dc2c2df04728a8ddf9202a44130088f53543130cbac04919526826d591"
+      "sha256": "4bf0f510855cfae61c655a56c690c13d544476776677a72b1afbc9b0bcdc5016"
     },
     {
       "name": "nado-storage.mjs",
-      "sha256": "54da0dd93e6fe591ea4f0aedfe725f89d418f4803082fb0d86e86cec1e6b82e8"
+      "sha256": "3ff2884f0d0dcaf9d6e738df4902890455fe72303158d9532261d53af9d2e236"
     },
     {
       "name": "fake-agent.mjs",

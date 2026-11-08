@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
-const VERSIONS = { hub: 25, runner: 3, openclaw: 1, 'native-storage':1 };
+const VERSIONS = { hub: 29, runner: 4, openclaw: 1, 'native-storage':1 };
 const TABLES = { hub: ['machines', 'sessions', 'turns', 'events'], runner: ['runs', 'outbox', 'imports'], openclaw: ['cursors', 'pending', 'seen', 'metadata'], 'native-storage':['directories'] };
 const quote = (name) => `"${name.replaceAll('"', '""')}"`;
 
@@ -22,7 +22,12 @@ function inspect(db, kind) {
     ...(version>=11?['native_workspace_tasks','native_input_grants','native_input_refs','native_approvals']:[]),
     ...(version>=12?['task_execution_authorizations']:[]),...(version>=13?['native_task_scheduling','execution_allocations']:[]),...(version>=14?['native_task_budgets','native_budget_reservations','native_task_storage']:[]),...(version>=15?['artifact_collection_files']:[]),...(version>=16?['native_rounds','native_recovery_attempts','native_checkpoint_requests','native_step_receipts']:[]),...(version>=17?['resource_catalog_devices','resource_catalog_entries','resource_catalog_uploads','resource_catalog_pages','resource_catalog_grants']:[]),...(version>=18?['remote_tasks','remote_steps','remote_attempts','remote_tool_grants','remote_events']:[]),...(version>=19?['file_transfers','file_transfer_grants','file_transfer_events']:[]),...(version>=20?['operations','operation_links','operation_attempts','operation_grants','operation_events','operation_holds','operation_resolutions']:[]),...(version>=21?['agent_tasks','agent_plans','agent_model_calls','agent_model_grants','agent_events','agent_controls']:[]),
     ...(version>=23?['conversations','conversation_turns','conversation_events','conversation_submissions']:[]),
-    ...(version>=24?['agent_budget_state','agent_budget_reservations']:[])] : TABLES[kind];
+    ...(version>=24?['agent_budget_state','agent_budget_reservations']:[]),
+    ...(version>=26?['agent_delegations']:[]),
+    ...(version>=27?['agent_delegation_budget_holds']:[]),
+    ...(version>=28?['agent_delegation_budget_terms','agent_delegation_budget_settlements']:[]),
+    ...(version>=29?['agent_delegation_requests']:[])] : kind === 'runner' && version >= 4
+      ? [...TABLES.runner, 'dispatch_receipts', 'dispatch_conflicts'] : TABLES[kind];
   for (const table of required) {
     if (!tables.some((row) => row.name === table)) throw new Error(`not a recognized ${kind} database: missing ${table}`);
   }

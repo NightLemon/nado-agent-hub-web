@@ -4241,6 +4241,41 @@ var ModelStartSchema = external_exports.object({ t: external_exports.literal("mo
 var ModelResultSchema = external_exports.object({ t: external_exports.literal("model.result"), requestId: id5, connectionId: id5, reply: ChatReplySchema.optional(), error: external_exports.enum(["unavailable", "canceled", "transport", "invalid-response", "duplicate"]).optional() }).strict();
 var AgentTaskInputSchema = external_exports.object({ version: external_exports.literal(4), clientId: id5, goal: external_exports.string().min(1).max(16e3), provider: external_exports.object({ deviceId: id5, capabilityId: id5 }).strict(), constraints: external_exports.object({ deviceIds: external_exports.array(id5).min(1).max(64).optional(), readOnly: external_exports.boolean().default(false) }).strict().default({}), budget: external_exports.object({ maxModelRequests: external_exports.number().int().min(1).max(50).default(10), maxToolCalls: external_exports.number().int().min(1).max(100).default(20), maxTokens: external_exports.number().int().min(1024).max(2e6).default(2e5), maxOutputTokens: external_exports.number().int().min(64).max(8192).default(2048), deadlineSeconds: external_exports.number().int().min(10).max(3600).default(300) }).strict().default({}) }).strict();
 
+// packages/protocol/src/catalog.ts
+var CATALOG_LIMITS = { pageEntries: 100, deviceEntries: 1e4, ttlMs: 12e4, uploadMs: 6e4 };
+var id6 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var generation = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var relativePath = external_exports.string().min(1).max(512).refine((p) => !p.includes("\\") && !p.startsWith("/") && !p.includes(":") && p.split("/").every((s) => s !== ".." && s !== "." && s.length > 0), "invalid relative path");
+var base = { id: id6, label: external_exports.string().min(1).max(200) };
+var NativeDelegationReadinessSchema = external_exports.discriminatedUnion("runtimeReady", [
+  external_exports.object({
+    version: external_exports.literal(1),
+    backend: external_exports.literal("native-task-v2"),
+    runtimeReady: external_exports.literal(true),
+    executionEnabled: external_exports.literal(false),
+    reason: external_exports.literal("ready-for-integration"),
+    contextVersion: external_exports.literal(1).optional(),
+    features: external_exports.array(external_exports.enum(["permission-request", "report-publication"])).max(2).refine((items) => new Set(items).size === items.length, "duplicate delegation feature").optional()
+  }).strict(),
+  external_exports.object({ version: external_exports.literal(1), backend: external_exports.literal("native-task-v2"), runtimeReady: external_exports.literal(false), executionEnabled: external_exports.literal(false), reason: external_exports.enum(["runtime-not-configured", "runtime-missing", "config-not-ready", "incompatible-runtime", "workspace-not-ready"]) }).strict()
+]);
+var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ ...base, kind: external_exports.literal("hardware"), resourceType: external_exports.enum(["cpu", "memory", "gpu", "npu", "storage"]), capacity: external_exports.number().finite().nonnegative(), availableCapacity: external_exports.number().finite().nonnegative().optional(), hardwareId: external_exports.string().min(1).max(128).optional(), unit: external_exports.enum(["slots", "MiB", "bytes", "devices"]), vendor: external_exports.string().max(40).optional(), evidence: external_exports.enum(["probed", "declared"]), observedAt: external_exports.number().int().nonnegative() }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("capability"), protocol: external_exports.enum(["catalog-metadata-v1", "legacy-session-v2", "runner-readonly-v1", "runner-transfer-v1", "runner-operation-v1", "runner-model-v1", "runner-agent-v1"]), operation: OperationDescriptorSchema.optional(), model: ModelDescriptorSchema.optional(), delegation: NativeDelegationReadinessSchema.optional(), name: external_exports.string().min(1).max(100), version: external_exports.string().max(100).optional(), readiness: external_exports.enum(["available", "unknown", "unavailable"]), evidence: external_exports.enum(["probed", "declared"]) }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("root"), rootId: id6, generation: generation.nullable(), storageId: id6.optional(), access: external_exports.literal("read-only") }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
+]);
+var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
+var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
+var CatalogBeginSchema = external_exports.union([
+  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
+  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
+  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
+]);
+var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
+var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
+var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
+
 // packages/protocol/src/workspace.ts
 var InputRootSchema = external_exports.object({ id: external_exports.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), label: external_exports.string().min(1).max(100), generation: external_exports.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 var InputRefSchema = external_exports.object({
@@ -4338,12 +4373,104 @@ var NativeStorageReportSchema = external_exports.object({
   retainedUntil: external_exports.number().int().nonnegative().nullable()
 }).strict();
 
+// packages/protocol/src/delegation.ts
+var id7 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var hash3 = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var text = external_exports.string().trim().min(1).max(4e3);
+var unique = (items) => new Set(items).size === items.length;
+var limit = (max) => external_exports.number().int().nonnegative().max(max);
+var relativeInputPath = (path) => !/[\x00-\x1f\x7f:\\]/.test(path) && path.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+var fixedInput = InputRefSchema.extend({
+  rootGeneration: hash3,
+  path: InputRefSchema.shape.path.refine(relativeInputPath, "input path must be relative to the registered root"),
+  name: InputRefSchema.shape.name.refine((name) => relativeInputPath(name) && !name.includes("/"), "invalid snapshot filename")
+});
+var DelegationBudgetSchema = external_exports.object({
+  maxModelRequests: limit(1e3),
+  maxToolCalls: limit(2e3),
+  maxTokens: limit(1e9),
+  maxCostMicros: limit(1e12),
+  maxOutputTokens: external_exports.number().int().positive().max(32768),
+  deadlineSeconds: external_exports.number().int().positive().max(3600)
+}).strict();
+var DelegationContractSchema = external_exports.object({
+  version: external_exports.literal(1),
+  id: id7,
+  parentTaskId: id7,
+  parentPlanId: id7.nullable(),
+  parentStepId: id7,
+  goal: text,
+  workspace: external_exports.object({
+    profile: external_exports.literal("workspace"),
+    trustedHostConsent: external_exports.literal(false),
+    inputRefs: external_exports.array(fixedInput).min(1).max(16)
+  }).strict(),
+  permissions: external_exports.object({
+    tools: external_exports.array(external_exports.enum(["list_inputs", "list_files", "read_file", "task_finish", "request_permission"])).min(1).max(5).refine(unique, "duplicate tool"),
+    network: external_exports.literal("none"),
+    write: external_exports.literal("none"),
+    redelegate: external_exports.literal(false)
+  }).strict(),
+  /** Trusted publication of the validated report does not grant model write tools. */
+  publication: external_exports.object({ format: external_exports.literal("delegation-report-v1"), path: external_exports.literal("output/delegation-result.json") }).strict().optional(),
+  budget: DelegationBudgetSchema,
+  completion: external_exports.object({
+    requiredFindings: external_exports.array(id7).min(1).max(16).refine(unique, "duplicate finding"),
+    requireInputEvidence: external_exports.literal(true),
+    criteria: external_exports.array(text).min(1).max(16)
+  }).strict()
+}).strict().superRefine((contract, ctx) => {
+  const refs = contract.workspace.inputRefs;
+  if (!unique(refs.map((ref) => ref.id))) ctx.addIssue({ code: "custom", message: "duplicate input reference" });
+  if (new Set(refs.map((ref) => ref.machineId)).size !== 1) ctx.addIssue({ code: "custom", message: "initial delegation requires one input device" });
+});
+var DelegationContextSchema = external_exports.object({
+  version: external_exports.literal(1),
+  contract: DelegationContractSchema,
+  inputHash: hash3,
+  machineId: id7,
+  attemptId: id7,
+  epoch: external_exports.number().int().positive()
+}).strict().refine(
+  (context) => context.contract.workspace.inputRefs.every((ref) => ref.machineId === context.machineId),
+  "delegation input device does not match execution device"
+);
+var DelegationEvidenceSchema = external_exports.object({
+  inputRefId: id7,
+  sha256: hash3,
+  locator: text
+}).strict();
+var DelegationOutcomeSchema = external_exports.discriminatedUnion("status", [
+  external_exports.object({
+    status: external_exports.literal("completed"),
+    summary: text,
+    findings: external_exports.array(external_exports.object({ key: id7, value: text, evidence: external_exports.array(DelegationEvidenceSchema).min(1).max(16) }).strict()).min(1).max(16)
+  }).strict(),
+  external_exports.object({ status: external_exports.literal("failed"), reason: external_exports.enum(["invalid-input", "runtime-error", "verification-failed", "budget-exhausted", "canceled"]), detail: text }).strict(),
+  external_exports.object({ status: external_exports.literal("blocked"), reason: external_exports.enum(["missing-input", "permission-required", "runtime-unavailable"]), detail: text }).strict()
+]);
+var DelegationResultSchema = external_exports.object({
+  version: external_exports.literal(1),
+  delegationId: id7,
+  parentTaskId: id7,
+  childTaskId: id7,
+  inputHash: hash3,
+  attemptId: id7,
+  epoch: external_exports.number().int().positive(),
+  turnId: id7,
+  runId: id7,
+  machineId: id7,
+  outcome: DelegationOutcomeSchema,
+  artifactRefs: external_exports.array(external_exports.literal("output/delegation-result.json")).max(1).optional(),
+  permissionRequest: external_exports.object({ kind: external_exports.literal("publish-report"), reason: text }).strict().optional()
+}).strict();
+
 // packages/protocol/src/tasks.ts
 var TaskStatusSchema = external_exports.enum(["queued", "running", "recovering", "cancel_requested", "needs_reconciliation", "succeeded", "failed", "canceled"]);
 var CreateTenantBodySchema = external_exports.object({ name: external_exports.string().trim().min(1).max(100) }).strict();
 var CreateTaskBodySchema = external_exports.object({
   clientId: external_exports.string().min(1).max(100).regex(/^[^\x00-\x20\x7f]+$/),
-  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2), "prompt must not be blank"),
+  prompt: external_exports.string().min(1).max(32768).refine((text3) => /\S/.test(text3), "prompt must not be blank"),
   title: external_exports.string().trim().min(1).max(200).optional(),
   machineId: external_exports.string().min(1).max(100).optional(),
   scenario: external_exports.enum(["normal", "invalid-args", "duplicate-call-id", "waiting-model"]).default("normal")
@@ -4353,7 +4480,7 @@ var CreateGeneralTaskBodySchema = CreateTaskBodySchema.omit({ scenario: true }).
   resources: ResourceRequestSchema.optional(),
   placement: PlacementSchema.optional(),
   budget: TaskBudgetSchema.optional(),
-  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2) && new TextEncoder().encode(text2).length <= 32768, "prompt exceeds UTF-8 limit or is blank"),
+  prompt: external_exports.string().min(1).max(32768).refine((text3) => /\S/.test(text3) && new TextEncoder().encode(text3).length <= 32768, "prompt exceeds UTF-8 limit or is blank"),
   executionProfile: external_exports.enum(["conversation", "workspace", "trusted-host"]).optional(),
   inputRefIds: external_exports.array(external_exports.string().min(1).max(100)).max(16).optional(),
   trustedHostConsent: external_exports.boolean().optional()
@@ -4361,7 +4488,7 @@ var CreateGeneralTaskBodySchema = CreateTaskBodySchema.omit({ scenario: true }).
 var FollowupTaskBodySchema = external_exports.object({
   clientId: external_exports.string().min(1).max(100).regex(/^[^\x00-\x20\x7f]+$/),
   expectedVersion: external_exports.number().int().positive(),
-  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2) && new TextEncoder().encode(text2).length <= 32768, "prompt exceeds UTF-8 limit or is blank")
+  prompt: external_exports.string().min(1).max(32768).refine((text3) => /\S/.test(text3) && new TextEncoder().encode(text3).length <= 32768, "prompt exceeds UTF-8 limit or is blank")
 }).strict();
 var NativeContextSchema = external_exports.object({
   taskId: external_exports.string().regex(/^task_[\w-]{1,100}$/),
@@ -4370,31 +4497,9 @@ var NativeContextSchema = external_exports.object({
   workspace: WorkspaceSpecSchema.optional(),
   budget: BudgetContextSchema.optional(),
   delivery: external_exports.object({ version: external_exports.literal(1), extensions: external_exports.array(external_exports.string().regex(/^\.[a-z0-9]+$/)).max(64) }).strict().optional(),
-  recovery: RecoveryContextSchema.optional()
+  recovery: RecoveryContextSchema.optional(),
+  delegation: DelegationContextSchema.optional()
 }).strict();
-
-// packages/protocol/src/catalog.ts
-var CATALOG_LIMITS = { pageEntries: 100, deviceEntries: 1e4, ttlMs: 12e4, uploadMs: 6e4 };
-var id6 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
-var generation = external_exports.string().regex(/^[a-f0-9]{64}$/);
-var relativePath = external_exports.string().min(1).max(512).refine((p) => !p.includes("\\") && !p.startsWith("/") && !p.includes(":") && p.split("/").every((s) => s !== ".." && s !== "." && s.length > 0), "invalid relative path");
-var base = { id: id6, label: external_exports.string().min(1).max(200) };
-var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
-  external_exports.object({ ...base, kind: external_exports.literal("hardware"), resourceType: external_exports.enum(["cpu", "memory", "gpu", "npu", "storage"]), capacity: external_exports.number().finite().nonnegative(), availableCapacity: external_exports.number().finite().nonnegative().optional(), hardwareId: external_exports.string().min(1).max(128).optional(), unit: external_exports.enum(["slots", "MiB", "bytes", "devices"]), vendor: external_exports.string().max(40).optional(), evidence: external_exports.enum(["probed", "declared"]), observedAt: external_exports.number().int().nonnegative() }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("capability"), protocol: external_exports.enum(["catalog-metadata-v1", "legacy-session-v2", "runner-readonly-v1", "runner-transfer-v1", "runner-operation-v1", "runner-model-v1"]), operation: OperationDescriptorSchema.optional(), model: ModelDescriptorSchema.optional(), name: external_exports.string().min(1).max(100), version: external_exports.string().max(100).optional(), readiness: external_exports.enum(["available", "unknown", "unavailable"]), evidence: external_exports.enum(["probed", "declared"]) }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("root"), rootId: id6, generation: generation.nullable(), storageId: id6.optional(), access: external_exports.literal("read-only") }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
-]);
-var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
-var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
-var CatalogBeginSchema = external_exports.union([
-  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
-  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
-  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
-]);
-var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
-var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
-var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
 
 // packages/protocol/src/artifacts.ts
 var DEFAULT_ARTIFACT_MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -4687,6 +4792,7 @@ var AdapterInfoSchema = external_exports.object({
   capabilities: AdapterCapabilitiesSchema.optional(),
   authentication: external_exports.enum(["unknown", "verified", "failed"]).optional(),
   nativeTaskApiVersions: external_exports.array(external_exports.union([external_exports.literal(1), external_exports.literal(2)])).max(2).optional(),
+  nativeDelegation: NativeDelegationReadinessSchema.optional(),
   nativeWorkspace: external_exports.object({ version: external_exports.literal(1), trustedHost: external_exports.boolean(), inputRoots: external_exports.array(InputRootSchema).max(32) }).strict().optional(),
   nativeResourceVersion: external_exports.literal(1).optional(),
   nativeBudgetVersion: external_exports.literal(1).optional(),
@@ -4873,12 +4979,12 @@ var ComputeConfigSchema = external_exports.object({
 }).strict().refine((v) => !Object.hasOwn(v.commands, "python") && Object.keys(v.commands).length <= 15, "python is reserved; at most 15 extra commands");
 
 // packages/runner/src/operation-config.ts
-var id7 = external_exports.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-var OperationServiceSchema = external_exports.object({ id: id7, url: external_exports.string().url(), semantics: external_exports.enum(["idempotent-queryable", "query-only", "unqueryable"]), actions: external_exports.array(OperationActionSchema).min(1).max(16).refine((a) => new Set(a.map((v) => v.name)).size === a.length, "duplicate operation action"), tokenEnv: external_exports.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), allowInsecureLoopback: external_exports.boolean().default(false), requestTimeoutMs: external_exports.number().int().min(100).max(1e4).default(3e3) }).strict().refine((s) => {
+var id8 = external_exports.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+var OperationServiceSchema = external_exports.object({ id: id8, url: external_exports.string().url(), semantics: external_exports.enum(["idempotent-queryable", "query-only", "unqueryable"]), actions: external_exports.array(OperationActionSchema).min(1).max(16).refine((a) => new Set(a.map((v) => v.name)).size === a.length, "duplicate operation action"), tokenEnv: external_exports.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), allowInsecureLoopback: external_exports.boolean().default(false), requestTimeoutMs: external_exports.number().int().min(100).max(1e4).default(3e3) }).strict().refine((s) => {
   const u = new URL(s.url);
   return !u.username && !u.password && !u.search && !u.hash && (u.protocol === "https:" || s.allowInsecureLoopback && u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname));
 }, "operation service requires HTTPS or explicitly allowed loopback HTTP");
-var OperationArchiveRootSchema = external_exports.object({ id: id7, path: external_exports.string().refine(isAbsolute2), maxManagedBytes: external_exports.number().int().positive().default(1024 ** 3) }).strict();
+var OperationArchiveRootSchema = external_exports.object({ id: id8, path: external_exports.string().refine(isAbsolute2), maxManagedBytes: external_exports.number().int().positive().default(1024 ** 3) }).strict();
 var OperationsConfigSchema = external_exports.object({ enabled: external_exports.boolean().default(true), services: external_exports.array(OperationServiceSchema.refine((s) => Buffer.byteLength(JSON.stringify(s.actions)) <= 14e3, "service schemas exceed 14 KiB")).max(16).default([]), archiveRoots: external_exports.array(OperationArchiveRootSchema).max(16).default([]), workspaces: external_exports.array(ComputeConfigSchema).max(4).optional() }).strict().refine((v) => new Set(v.services.map((s) => s.id)).size === v.services.length && new Set(v.archiveRoots.map((s) => s.id)).size === v.archiveRoots.length && new Set((v.workspaces ?? []).map((s) => s.id)).size === (v.workspaces ?? []).length, "duplicate operation scope");
 
 // packages/runner/src/operation-capabilities.ts
@@ -5061,7 +5167,7 @@ async function readJson(path) {
   }
 }
 async function hashFile(path, signal, expectedBytes) {
-  const before = await safeRegular(path), h = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)), hash3 = createHash2("sha256");
+  const before = await safeRegular(path), h = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)), hash4 = createHash2("sha256");
   try {
     const st = await h.stat();
     if (st.ino !== before.ino || st.dev !== before.dev || st.nlink !== 1) throw unsafe();
@@ -5072,12 +5178,12 @@ async function hashFile(path, signal, expectedBytes) {
       signal?.throwIfAborted();
       const r = await h.read(b, 0, Math.min(b.length, st.size - n), n);
       if (!r.bytesRead) throw new TransferFileError("input-changed");
-      hash3.update(b.subarray(0, r.bytesRead));
+      hash4.update(b.subarray(0, r.bytesRead));
       n += r.bytesRead;
     }
     const after = await h.stat(), link = await safeRegular(path);
     if (after.size !== st.size || after.mtimeMs !== st.mtimeMs || after.ctimeMs !== st.ctimeMs || link.ino !== st.ino || link.dev !== st.dev || link.size !== st.size || link.mtimeMs !== st.mtimeMs || link.ctimeMs !== st.ctimeMs) throw new TransferFileError("input-changed");
-    return { sha256: hash3.digest("hex"), sizeBytes: n };
+    return { sha256: hash4.digest("hex"), sizeBytes: n };
   } finally {
     await h.close();
   }
@@ -5400,7 +5506,7 @@ async function archive(job) {
   } catch (e) {
     if (!missing2(e)) throw e;
   }
-  const source = await open3(job.input.path, "r"), target = await open3(part, "wx", 384), hash3 = createHash5("sha256");
+  const source = await open3(job.input.path, "r"), target = await open3(part, "wx", 384), hash4 = createHash5("sha256");
   try {
     let offset = 0;
     const b = Buffer.alloc(256 * 1024);
@@ -5408,7 +5514,7 @@ async function archive(job) {
       if (Date.now() >= job.deadlineAt) throw Error("archive deadline");
       const got = await source.read(b, 0, Math.min(b.length, r.inputFile.sizeBytes - offset), offset);
       if (!got.bytesRead) throw Error("archive input truncated");
-      hash3.update(b.subarray(0, got.bytesRead));
+      hash4.update(b.subarray(0, got.bytesRead));
       let n = 0;
       while (n < got.bytesRead) {
         const w = await target.write(b, n, got.bytesRead - n, offset + n);
@@ -5417,7 +5523,7 @@ async function archive(job) {
       }
       offset += got.bytesRead;
     }
-    if (hash3.digest("hex") !== r.inputFile.sha256) throw Error("archive input changed");
+    if (hash4.digest("hex") !== r.inputFile.sha256) throw Error("archive input changed");
     await target.sync();
   } finally {
     await source.close();
@@ -5514,9 +5620,9 @@ async function executeOperation(input) {
 }
 
 // packages/runner/src/operation-entry.ts
-var text = "";
+var text2 = "";
 for await (const part of process.stdin) {
-  text += String(part);
-  if (Buffer.byteLength(text) > 65536) throw Error("operation job exceeds limit");
+  text2 += String(part);
+  if (Buffer.byteLength(text2) > 65536) throw Error("operation job exceeds limit");
 }
-process.stdout.write(JSON.stringify(await executeOperation(JSON.parse(text))) + "\n");
+process.stdout.write(JSON.stringify(await executeOperation(JSON.parse(text2))) + "\n");

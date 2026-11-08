@@ -349,8 +349,8 @@ var openclawAdapter = {
               ...typeof doc.runId === "string" ? { sourceRunId: doc.runId } : {}
             });
           }
-          const text = doc.result.payloads.map((p) => [p.text, p.mediaUrl ? `![](${p.mediaUrl})` : ""].filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
-          if (text) events.push({ type: "text", text });
+          const text2 = doc.result.payloads.map((p) => [p.text, p.mediaUrl ? `![](${p.mediaUrl})` : ""].filter(Boolean).join("\n")).filter(Boolean).join("\n\n");
+          if (text2) events.push({ type: "text", text: text2 });
           const u = meta.usage;
           if (u) {
             events.push({
@@ -401,8 +401,8 @@ var piAdapter = {
         if (o.type === "message_update" && ame?.type === "text_delta" && ame.delta) {
           out.push({ type: "text.delta", text: ame.delta });
         } else if (o.type === "message_end" && o.message?.role === "assistant") {
-          const text = (o.message.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("");
-          if (text) out.push({ type: "text", text });
+          const text2 = (o.message.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("");
+          if (text2) out.push({ type: "text", text: text2 });
         } else if (o.type === "tool_execution_start") {
           out.push({ type: "tool.call", id: o.toolCallId, name: o.toolName, input: o.args });
         } else if (o.type === "tool_execution_end") {
@@ -420,6 +420,7 @@ var piAdapter = {
 
 // packages/adapters/src/native.ts
 import { isAbsolute, join } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -4636,6 +4637,41 @@ var ModelStartSchema = external_exports.object({ t: external_exports.literal("mo
 var ModelResultSchema = external_exports.object({ t: external_exports.literal("model.result"), requestId: id5, connectionId: id5, reply: ChatReplySchema.optional(), error: external_exports.enum(["unavailable", "canceled", "transport", "invalid-response", "duplicate"]).optional() }).strict();
 var AgentTaskInputSchema = external_exports.object({ version: external_exports.literal(4), clientId: id5, goal: external_exports.string().min(1).max(16e3), provider: external_exports.object({ deviceId: id5, capabilityId: id5 }).strict(), constraints: external_exports.object({ deviceIds: external_exports.array(id5).min(1).max(64).optional(), readOnly: external_exports.boolean().default(false) }).strict().default({}), budget: external_exports.object({ maxModelRequests: external_exports.number().int().min(1).max(50).default(10), maxToolCalls: external_exports.number().int().min(1).max(100).default(20), maxTokens: external_exports.number().int().min(1024).max(2e6).default(2e5), maxOutputTokens: external_exports.number().int().min(64).max(8192).default(2048), deadlineSeconds: external_exports.number().int().min(10).max(3600).default(300) }).strict().default({}) }).strict();
 
+// packages/protocol/src/catalog.ts
+var CATALOG_LIMITS = { pageEntries: 100, deviceEntries: 1e4, ttlMs: 12e4, uploadMs: 6e4 };
+var id6 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var generation = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var relativePath = external_exports.string().min(1).max(512).refine((p) => !p.includes("\\") && !p.startsWith("/") && !p.includes(":") && p.split("/").every((s) => s !== ".." && s !== "." && s.length > 0), "invalid relative path");
+var base = { id: id6, label: external_exports.string().min(1).max(200) };
+var NativeDelegationReadinessSchema = external_exports.discriminatedUnion("runtimeReady", [
+  external_exports.object({
+    version: external_exports.literal(1),
+    backend: external_exports.literal("native-task-v2"),
+    runtimeReady: external_exports.literal(true),
+    executionEnabled: external_exports.literal(false),
+    reason: external_exports.literal("ready-for-integration"),
+    contextVersion: external_exports.literal(1).optional(),
+    features: external_exports.array(external_exports.enum(["permission-request", "report-publication"])).max(2).refine((items) => new Set(items).size === items.length, "duplicate delegation feature").optional()
+  }).strict(),
+  external_exports.object({ version: external_exports.literal(1), backend: external_exports.literal("native-task-v2"), runtimeReady: external_exports.literal(false), executionEnabled: external_exports.literal(false), reason: external_exports.enum(["runtime-not-configured", "runtime-missing", "config-not-ready", "incompatible-runtime", "workspace-not-ready"]) }).strict()
+]);
+var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ ...base, kind: external_exports.literal("hardware"), resourceType: external_exports.enum(["cpu", "memory", "gpu", "npu", "storage"]), capacity: external_exports.number().finite().nonnegative(), availableCapacity: external_exports.number().finite().nonnegative().optional(), hardwareId: external_exports.string().min(1).max(128).optional(), unit: external_exports.enum(["slots", "MiB", "bytes", "devices"]), vendor: external_exports.string().max(40).optional(), evidence: external_exports.enum(["probed", "declared"]), observedAt: external_exports.number().int().nonnegative() }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("capability"), protocol: external_exports.enum(["catalog-metadata-v1", "legacy-session-v2", "runner-readonly-v1", "runner-transfer-v1", "runner-operation-v1", "runner-model-v1", "runner-agent-v1"]), operation: OperationDescriptorSchema.optional(), model: ModelDescriptorSchema.optional(), delegation: NativeDelegationReadinessSchema.optional(), name: external_exports.string().min(1).max(100), version: external_exports.string().max(100).optional(), readiness: external_exports.enum(["available", "unknown", "unavailable"]), evidence: external_exports.enum(["probed", "declared"]) }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("root"), rootId: id6, generation: generation.nullable(), storageId: id6.optional(), access: external_exports.literal("read-only") }).strict(),
+  external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
+]);
+var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
+var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
+var CatalogBeginSchema = external_exports.union([
+  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
+  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
+  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
+]);
+var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
+var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
+var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
+
 // packages/protocol/src/workspace.ts
 var InputRootSchema = external_exports.object({ id: external_exports.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), label: external_exports.string().min(1).max(100), generation: external_exports.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 var InputRefSchema = external_exports.object({
@@ -4733,12 +4769,122 @@ var NativeStorageReportSchema = external_exports.object({
   retainedUntil: external_exports.number().int().nonnegative().nullable()
 }).strict();
 
+// packages/protocol/src/delegation.ts
+var id7 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var hash3 = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var text = external_exports.string().trim().min(1).max(4e3);
+var unique = (items) => new Set(items).size === items.length;
+var limit = (max) => external_exports.number().int().nonnegative().max(max);
+var relativeInputPath = (path) => !/[\x00-\x1f\x7f:\\]/.test(path) && path.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
+var fixedInput = InputRefSchema.extend({
+  rootGeneration: hash3,
+  path: InputRefSchema.shape.path.refine(relativeInputPath, "input path must be relative to the registered root"),
+  name: InputRefSchema.shape.name.refine((name) => relativeInputPath(name) && !name.includes("/"), "invalid snapshot filename")
+});
+var DelegationBudgetSchema = external_exports.object({
+  maxModelRequests: limit(1e3),
+  maxToolCalls: limit(2e3),
+  maxTokens: limit(1e9),
+  maxCostMicros: limit(1e12),
+  maxOutputTokens: external_exports.number().int().positive().max(32768),
+  deadlineSeconds: external_exports.number().int().positive().max(3600)
+}).strict();
+var DelegationContractSchema = external_exports.object({
+  version: external_exports.literal(1),
+  id: id7,
+  parentTaskId: id7,
+  parentPlanId: id7.nullable(),
+  parentStepId: id7,
+  goal: text,
+  workspace: external_exports.object({
+    profile: external_exports.literal("workspace"),
+    trustedHostConsent: external_exports.literal(false),
+    inputRefs: external_exports.array(fixedInput).min(1).max(16)
+  }).strict(),
+  permissions: external_exports.object({
+    tools: external_exports.array(external_exports.enum(["list_inputs", "list_files", "read_file", "task_finish", "request_permission"])).min(1).max(5).refine(unique, "duplicate tool"),
+    network: external_exports.literal("none"),
+    write: external_exports.literal("none"),
+    redelegate: external_exports.literal(false)
+  }).strict(),
+  /** Trusted publication of the validated report does not grant model write tools. */
+  publication: external_exports.object({ format: external_exports.literal("delegation-report-v1"), path: external_exports.literal("output/delegation-result.json") }).strict().optional(),
+  budget: DelegationBudgetSchema,
+  completion: external_exports.object({
+    requiredFindings: external_exports.array(id7).min(1).max(16).refine(unique, "duplicate finding"),
+    requireInputEvidence: external_exports.literal(true),
+    criteria: external_exports.array(text).min(1).max(16)
+  }).strict()
+}).strict().superRefine((contract, ctx) => {
+  const refs = contract.workspace.inputRefs;
+  if (!unique(refs.map((ref) => ref.id))) ctx.addIssue({ code: "custom", message: "duplicate input reference" });
+  if (new Set(refs.map((ref) => ref.machineId)).size !== 1) ctx.addIssue({ code: "custom", message: "initial delegation requires one input device" });
+});
+var DelegationContextSchema = external_exports.object({
+  version: external_exports.literal(1),
+  contract: DelegationContractSchema,
+  inputHash: hash3,
+  machineId: id7,
+  attemptId: id7,
+  epoch: external_exports.number().int().positive()
+}).strict().refine(
+  (context) => context.contract.workspace.inputRefs.every((ref) => ref.machineId === context.machineId),
+  "delegation input device does not match execution device"
+);
+var DelegationEvidenceSchema = external_exports.object({
+  inputRefId: id7,
+  sha256: hash3,
+  locator: text
+}).strict();
+var DelegationOutcomeSchema = external_exports.discriminatedUnion("status", [
+  external_exports.object({
+    status: external_exports.literal("completed"),
+    summary: text,
+    findings: external_exports.array(external_exports.object({ key: id7, value: text, evidence: external_exports.array(DelegationEvidenceSchema).min(1).max(16) }).strict()).min(1).max(16)
+  }).strict(),
+  external_exports.object({ status: external_exports.literal("failed"), reason: external_exports.enum(["invalid-input", "runtime-error", "verification-failed", "budget-exhausted", "canceled"]), detail: text }).strict(),
+  external_exports.object({ status: external_exports.literal("blocked"), reason: external_exports.enum(["missing-input", "permission-required", "runtime-unavailable"]), detail: text }).strict()
+]);
+var DelegationResultSchema = external_exports.object({
+  version: external_exports.literal(1),
+  delegationId: id7,
+  parentTaskId: id7,
+  childTaskId: id7,
+  inputHash: hash3,
+  attemptId: id7,
+  epoch: external_exports.number().int().positive(),
+  turnId: id7,
+  runId: id7,
+  machineId: id7,
+  outcome: DelegationOutcomeSchema,
+  artifactRefs: external_exports.array(external_exports.literal("output/delegation-result.json")).max(1).optional(),
+  permissionRequest: external_exports.object({ kind: external_exports.literal("publish-report"), reason: text }).strict().optional()
+}).strict();
+function validateDelegationResult(contractInput, resultInput) {
+  const contract = DelegationContractSchema.parse(contractInput), result = DelegationResultSchema.parse(resultInput);
+  if (result.delegationId !== contract.id || result.parentTaskId !== contract.parentTaskId) throw new Error("delegation result belongs to another task");
+  if (result.permissionRequest && (!contract.permissions.tools.includes("request_permission") || contract.publication || result.outcome.status !== "blocked" || result.outcome.reason !== "permission-required")) throw new Error("permission request does not match the delegated scope or outcome");
+  const paths = result.artifactRefs ?? [], expected = contract.publication && result.outcome.status === "completed" ? [contract.publication.path] : [];
+  if (JSON.stringify(paths) !== JSON.stringify(expected)) throw new Error("delegation artifacts do not match the authorized publication");
+  if (result.outcome.status !== "completed") return result;
+  const findings = result.outcome.findings, keys = findings.map((finding) => finding.key);
+  if (!unique(keys) || keys.length !== contract.completion.requiredFindings.length || contract.completion.requiredFindings.some((key) => !keys.includes(key))) {
+    throw new Error("completion findings do not match the contract");
+  }
+  for (const finding of findings) for (const evidence of finding.evidence) {
+    if (!contract.workspace.inputRefs.some((ref) => ref.id === evidence.inputRefId && ref.sha256 === evidence.sha256)) {
+      throw new Error("result evidence does not match a fixed input");
+    }
+  }
+  return result;
+}
+
 // packages/protocol/src/tasks.ts
 var TaskStatusSchema = external_exports.enum(["queued", "running", "recovering", "cancel_requested", "needs_reconciliation", "succeeded", "failed", "canceled"]);
 var CreateTenantBodySchema = external_exports.object({ name: external_exports.string().trim().min(1).max(100) }).strict();
 var CreateTaskBodySchema = external_exports.object({
   clientId: external_exports.string().min(1).max(100).regex(/^[^\x00-\x20\x7f]+$/),
-  prompt: external_exports.string().min(1).max(32768).refine((text) => /\S/.test(text), "prompt must not be blank"),
+  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2), "prompt must not be blank"),
   title: external_exports.string().trim().min(1).max(200).optional(),
   machineId: external_exports.string().min(1).max(100).optional(),
   scenario: external_exports.enum(["normal", "invalid-args", "duplicate-call-id", "waiting-model"]).default("normal")
@@ -4748,7 +4894,7 @@ var CreateGeneralTaskBodySchema = CreateTaskBodySchema.omit({ scenario: true }).
   resources: ResourceRequestSchema.optional(),
   placement: PlacementSchema.optional(),
   budget: TaskBudgetSchema.optional(),
-  prompt: external_exports.string().min(1).max(32768).refine((text) => /\S/.test(text) && new TextEncoder().encode(text).length <= 32768, "prompt exceeds UTF-8 limit or is blank"),
+  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2) && new TextEncoder().encode(text2).length <= 32768, "prompt exceeds UTF-8 limit or is blank"),
   executionProfile: external_exports.enum(["conversation", "workspace", "trusted-host"]).optional(),
   inputRefIds: external_exports.array(external_exports.string().min(1).max(100)).max(16).optional(),
   trustedHostConsent: external_exports.boolean().optional()
@@ -4756,7 +4902,7 @@ var CreateGeneralTaskBodySchema = CreateTaskBodySchema.omit({ scenario: true }).
 var FollowupTaskBodySchema = external_exports.object({
   clientId: external_exports.string().min(1).max(100).regex(/^[^\x00-\x20\x7f]+$/),
   expectedVersion: external_exports.number().int().positive(),
-  prompt: external_exports.string().min(1).max(32768).refine((text) => /\S/.test(text) && new TextEncoder().encode(text).length <= 32768, "prompt exceeds UTF-8 limit or is blank")
+  prompt: external_exports.string().min(1).max(32768).refine((text2) => /\S/.test(text2) && new TextEncoder().encode(text2).length <= 32768, "prompt exceeds UTF-8 limit or is blank")
 }).strict();
 var NativeContextSchema = external_exports.object({
   taskId: external_exports.string().regex(/^task_[\w-]{1,100}$/),
@@ -4765,31 +4911,9 @@ var NativeContextSchema = external_exports.object({
   workspace: WorkspaceSpecSchema.optional(),
   budget: BudgetContextSchema.optional(),
   delivery: external_exports.object({ version: external_exports.literal(1), extensions: external_exports.array(external_exports.string().regex(/^\.[a-z0-9]+$/)).max(64) }).strict().optional(),
-  recovery: RecoveryContextSchema.optional()
+  recovery: RecoveryContextSchema.optional(),
+  delegation: DelegationContextSchema.optional()
 }).strict();
-
-// packages/protocol/src/catalog.ts
-var CATALOG_LIMITS = { pageEntries: 100, deviceEntries: 1e4, ttlMs: 12e4, uploadMs: 6e4 };
-var id6 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
-var generation = external_exports.string().regex(/^[a-f0-9]{64}$/);
-var relativePath = external_exports.string().min(1).max(512).refine((p) => !p.includes("\\") && !p.startsWith("/") && !p.includes(":") && p.split("/").every((s) => s !== ".." && s !== "." && s.length > 0), "invalid relative path");
-var base = { id: id6, label: external_exports.string().min(1).max(200) };
-var CatalogEntrySchema = external_exports.discriminatedUnion("kind", [
-  external_exports.object({ ...base, kind: external_exports.literal("hardware"), resourceType: external_exports.enum(["cpu", "memory", "gpu", "npu", "storage"]), capacity: external_exports.number().finite().nonnegative(), availableCapacity: external_exports.number().finite().nonnegative().optional(), hardwareId: external_exports.string().min(1).max(128).optional(), unit: external_exports.enum(["slots", "MiB", "bytes", "devices"]), vendor: external_exports.string().max(40).optional(), evidence: external_exports.enum(["probed", "declared"]), observedAt: external_exports.number().int().nonnegative() }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("capability"), protocol: external_exports.enum(["catalog-metadata-v1", "legacy-session-v2", "runner-readonly-v1", "runner-transfer-v1", "runner-operation-v1", "runner-model-v1"]), operation: OperationDescriptorSchema.optional(), model: ModelDescriptorSchema.optional(), name: external_exports.string().min(1).max(100), version: external_exports.string().max(100).optional(), readiness: external_exports.enum(["available", "unknown", "unavailable"]), evidence: external_exports.enum(["probed", "declared"]) }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("root"), rootId: id6, generation: generation.nullable(), storageId: id6.optional(), access: external_exports.literal("read-only") }).strict(),
-  external_exports.object({ ...base, kind: external_exports.literal("file"), rootId: id6, generation, path: relativePath, sizeBytes: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), modifiedAt: external_exports.number().nonnegative(), fileVersion: generation, versionBasis: external_exports.literal("stat") }).strict()
-]);
-var CatalogRootScanSchema = external_exports.object({ rootId: id6, generation: generation.nullable(), state: external_exports.enum(["complete", "partial", "error"]), reason: external_exports.enum(["entry-limit", "depth-limit", "deadline", "io-error", "root-changed", "unsupported-path"]).optional() }).strict();
-var catalogUpload = { connectionId: id6, snapshotId: id6, mode: external_exports.enum(["snapshot", "delta"]) };
-var CatalogBeginSchema = external_exports.union([
-  external_exports.object({ ...catalogUpload, expectedContentId: id6.nullable() }).strict(),
-  // Compatibility for installed v1 Runners. This value now carries a change timestamp.
-  external_exports.object({ ...catalogUpload, expectedVersion: external_exports.number().int().nonnegative() }).strict()
-]);
-var CatalogRenewSchema = external_exports.object({ connectionId: id6, contentId: id6, observations: external_exports.array(CatalogEntrySchema.options[0]).max(CATALOG_LIMITS.deviceEntries).default([]) }).strict();
-var CatalogPageSchema = external_exports.object({ connectionId: id6, snapshotId: id6, page: external_exports.number().int().min(0).max(200), entries: external_exports.array(CatalogEntrySchema).max(CATALOG_LIMITS.pageEntries), deletedIds: external_exports.array(id6).max(CATALOG_LIMITS.pageEntries).default([]) }).strict();
-var CatalogCommitSchema = external_exports.object({ connectionId: id6, snapshotId: id6, pageCount: external_exports.number().int().min(1).max(201), roots: external_exports.array(CatalogRootScanSchema).max(32) }).strict().refine((v) => new Set(v.roots.map((r) => r.rootId)).size === v.roots.length, "duplicate root").refine((v) => v.roots.every((r) => r.generation !== null || r.state === "error"), "unknown root generation requires error state");
 
 // packages/protocol/src/artifacts.ts
 var DEFAULT_ARTIFACT_MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -5089,6 +5213,7 @@ var AdapterInfoSchema = external_exports.object({
   capabilities: AdapterCapabilitiesSchema.optional(),
   authentication: external_exports.enum(["unknown", "verified", "failed"]).optional(),
   nativeTaskApiVersions: external_exports.array(external_exports.union([external_exports.literal(1), external_exports.literal(2)])).max(2).optional(),
+  nativeDelegation: NativeDelegationReadinessSchema.optional(),
   nativeWorkspace: external_exports.object({ version: external_exports.literal(1), trustedHost: external_exports.boolean(), inputRoots: external_exports.array(InputRootSchema).max(32) }).strict().optional(),
   nativeResourceVersion: external_exports.literal(1).optional(),
   nativeBudgetVersion: external_exports.literal(1).optional(),
@@ -5257,13 +5382,14 @@ var OverrideRunBodySchema = external_exports.object({
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 function inputRootGeneration(path) {
-  const canonical = realpathSync(path).replaceAll("\\", "/"), info = statSync(path, { bigint: true });
+  const canonical2 = realpathSync(path).replaceAll("\\", "/"), info = statSync(path, { bigint: true });
   if (!info.isDirectory()) throw Error("input root is not a directory");
-  const identity = [process.platform === "win32" ? canonical.toLowerCase() : canonical, process.platform === "win32" ? "" : String(info.dev), String(info.ino)].join("\0");
+  const identity = [process.platform === "win32" ? canonical2.toLowerCase() : canonical2, process.platform === "win32" ? "" : String(info.dev), String(info.ino)].join("\0");
   return createHash("sha256").update(identity).digest("hex");
 }
 
 // packages/adapters/src/native.ts
+var canonical = (value) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 var nativeAdapter = {
   name: "native",
   capabilities: { streaming: false, resume: false, executionOwnership: "child", cancel: "process-tree" },
@@ -5277,6 +5403,12 @@ var nativeAdapter = {
       const { runId, turnId, sessionId } = input.execution;
       const spec2 = input.nativeContext.workspace, execution = input.nativeExecution;
       const budget = input.nativeContext.budget;
+      const delegation = input.nativeContext.delegation;
+      if (delegation) {
+        DelegationContextSchema.parse(delegation);
+        if (!spec2 || canonical(spec2) !== canonical(delegation.contract.workspace) || createHash2("sha256").update(canonical(spec2)).digest("hex") !== delegation.inputHash || !budget || budget.attemptId !== delegation.attemptId || budget.epoch !== delegation.epoch)
+          throw Error("delegation execution context does not match fixed workspace or attempt");
+      }
       if (budget && !input.nativeBudgetControl) throw Error("persistent budget control is missing");
       if (spec2 && (!execution?.config.enabled || spec2.profile === "trusted-host" && (!execution.config.allowTrustedHost || !spec2.trustedHostConsent))) throw Error("workspace execution is not authorized");
       const workspace = spec2 && execution ? {
@@ -5300,7 +5432,7 @@ var nativeAdapter = {
       return {
         cmd: config.path,
         args: ["-I", "-m", "nado_native_agent", "--provider", "configured", "--config", config.providerConfig, "--input-json"],
-        stdin: JSON.stringify({ prompt: input.prompt, messages, ...workspace ? { workspace } : {}, ...budget ? { budget: { ...budget, control_dir: input.nativeBudgetControl.controlDir } } : {}, ...input.nativeContext.recovery ? { recovery: { ...input.nativeContext.recovery, control_dir: input.nativeBudgetControl.controlDir, task_dir: input.workdir, storage_policy: budget?.policy.storage } } : {}, correlation: { task_id: taskId, trace_id: traceId, run_id: runId, turn_id: turnId, session_id: sessionId } }),
+        stdin: JSON.stringify({ prompt: input.prompt, messages, ...workspace ? { workspace } : {}, ...budget ? { budget: { ...budget, control_dir: input.nativeBudgetControl.controlDir } } : {}, ...delegation ? { delegation } : {}, ...input.nativeContext.recovery ? { recovery: { ...input.nativeContext.recovery, control_dir: input.nativeBudgetControl.controlDir, task_dir: input.workdir, storage_policy: budget?.policy.storage } } : {}, correlation: { task_id: taskId, trace_id: traceId, run_id: runId, turn_id: turnId, session_id: sessionId } }),
         env: { ...config.env, ...input.resources ? { NADO_RUN_ALLOCATION: JSON.stringify(input.resources), CUDA_VISIBLE_DEVICES: input.resources.gpuIds.join(",") || "-1", OMP_NUM_THREADS: String(input.resources.cpuSlots), MKL_NUM_THREADS: String(input.resources.cpuSlots), OPENBLAS_NUM_THREADS: String(input.resources.cpuSlots) } : {} },
         unsetEnv: ["PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"]
       };
@@ -5330,6 +5462,13 @@ var nativeAdapter = {
   },
   createParser(input) {
     const general = input?.options.nativeTaskVersion === 2;
+    const checkDelegationResult = (value) => {
+      const context = input?.nativeContext?.delegation;
+      if (!context || !input?.execution || !input.nativeContext) return;
+      const result = validateDelegationResult(context.contract, value);
+      if (result.childTaskId !== input.nativeContext.taskId || result.inputHash !== context.inputHash || result.machineId !== context.machineId || result.attemptId !== context.attemptId || result.epoch !== context.epoch || result.turnId !== input.execution.turnId || result.runId !== input.execution.runId) throw Error("delegation result execution identity mismatch");
+      return result;
+    };
     let seq = 0, runId, broken = false, terminal;
     return {
       onStdoutLine(line) {
@@ -5367,16 +5506,34 @@ var nativeAdapter = {
                 broken = true;
                 break;
               }
+              if (input?.nativeContext?.delegation) {
+                try {
+                  const result = checkDelegationResult(JSON.parse(event.answer.message));
+                  if (JSON.stringify(event.answer.artifact_refs) !== JSON.stringify(result?.artifactRefs ?? [])) throw Error("delegation publication references mismatch");
+                } catch {
+                  broken = true;
+                  break;
+                }
+              }
               terminal = { type: "turn.completed", finalText: event.answer.message };
               break;
             }
-            if (event.provider_closed !== true || !event.answer || typeof event.answer !== "object" || !Array.isArray(event.answer.candidate_device_ids) || !event.answer.candidate_device_ids.every((id7) => typeof id7 === "string") || !Array.isArray(event.answer.evidence_note_ids) || !event.answer.evidence_note_ids.every((id7) => typeof id7 === "string") || event.answer.availability_verified !== false || typeof event.answer.summary !== "string") {
+            if (event.provider_closed !== true || !event.answer || typeof event.answer !== "object" || !Array.isArray(event.answer.candidate_device_ids) || !event.answer.candidate_device_ids.every((id8) => typeof id8 === "string") || !Array.isArray(event.answer.evidence_note_ids) || !event.answer.evidence_note_ids.every((id8) => typeof id8 === "string") || event.answer.availability_verified !== false || typeof event.answer.summary !== "string") {
               broken = true;
               break;
             }
             terminal = { type: "turn.completed", finalText: JSON.stringify(event.answer, null, 2) };
             break;
           case "run.failed":
+            if (input?.nativeContext?.delegation && event.delegation_result !== void 0) {
+              try {
+                checkDelegationResult(event.delegation_result);
+                if (event.delegation_result.outcome.status === "completed") throw Error("failed execution cannot complete delegation");
+              } catch {
+                broken = true;
+                break;
+              }
+            }
             terminal = { type: "turn.failed", error: String(event.error_code ?? "runtime_failed") };
             break;
           case "run.canceled":
@@ -5427,7 +5584,7 @@ var nativeAdapter = {
         }
         return out;
       },
-      onStderr: (text) => [{ type: "stderr", text }],
+      onStderr: (text2) => [{ type: "stderr", text: text2 }],
       onExit(code, signal, canceled) {
         if (canceled) return [{ type: "turn.canceled" }];
         if (broken || !terminal) return [{ type: "turn.failed", error: "invalid or incomplete native JSONL stream", exitCode: code }];
@@ -5505,13 +5662,13 @@ function resolveCommand(cmd, env = process.env) {
   const found = which(cmd, env) ?? knownLocation(cmd, env);
   if (!found) throw new Error(`command not found: ${cmd}`);
   if (process.platform !== "win32" || !/\.(cmd|bat)$/i.test(found)) return { file: found, prefixArgs: [] };
-  const text = readFileSync(found, "utf8");
-  const m = /"%(?:~?dp0%?)\\?([^"]+?\.(?:js|mjs|cjs))"/i.exec(text);
+  const text2 = readFileSync(found, "utf8");
+  const m = /"%(?:~?dp0%?)\\?([^"]+?\.(?:js|mjs|cjs))"/i.exec(text2);
   if (m) {
     const script = join2(dirname(found), m[1]);
     if (existsSync(script)) return { file: process.execPath, prefixArgs: [script] };
   }
-  const exe = /"%(?:~?dp0%?)\\?([^"]+?\.exe)"/i.exec(text);
+  const exe = /"%(?:~?dp0%?)\\?([^"]+?\.exe)"/i.exec(text2);
   if (exe) {
     const bin = join2(dirname(found), exe[1]);
     if (existsSync(bin)) return { file: bin, prefixArgs: [] };
@@ -5842,9 +5999,23 @@ function runTurn(adapter, config, input, onEvent, opts = {}) {
 import { existsSync as existsSync2, mkdirSync, readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-var OUTBOX_SCHEMA_VERSION = 3;
+var OUTBOX_SCHEMA_VERSION = 4;
 var REPLAY_MAX_EVENTS = 256;
 var INVENTORY_WHERE = "(next_rseq-1>acked_rseq OR (resource_released_at IS NULL AND state NOT IN ('closed','none')))=1";
+var DispatchConflict = class extends Error {
+  constructor(turnId, runId, incomingHash, reason) {
+    super(`dispatch conflict: ${reason}`);
+    this.turnId = turnId;
+    this.runId = runId;
+    this.incomingHash = incomingHash;
+    this.reason = reason;
+    this.name = "DispatchConflict";
+  }
+};
+var DISPATCH_SCHEMA = `
+CREATE TABLE dispatch_receipts(run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON UPDATE CASCADE,request_hash TEXT NOT NULL);
+CREATE TABLE dispatch_conflicts(run_id TEXT NOT NULL REFERENCES runs(run_id) ON UPDATE CASCADE,request_hash TEXT NOT NULL,PRIMARY KEY(run_id,request_hash));
+`;
 var SCHEMA = `
 CREATE TABLE runs (
  run_id TEXT PRIMARY KEY, turn_id TEXT NOT NULL UNIQUE, session_id TEXT, native_key TEXT,
@@ -5882,7 +6053,8 @@ var Spool = class {
           } else if (version === 1) {
             this.db.exec("ALTER TABLE runs ADD COLUMN resource_released_at INTEGER; ALTER TABLE runs ADD COLUMN release_reason TEXT;");
           }
-          this.db.exec(`CREATE INDEX runs_inventory ON runs(created_at,run_id) WHERE ${INVENTORY_WHERE}`);
+          if (version < 3) this.db.exec(`CREATE INDEX runs_inventory ON runs(created_at,run_id) WHERE ${INVENTORY_WHERE}`);
+          this.db.exec(DISPATCH_SCHEMA);
           this.db.exec(`PRAGMA user_version=${OUTBOX_SCHEMA_VERSION}`);
         });
       }
@@ -5914,6 +6086,7 @@ var Spool = class {
         this.db.exec("ROLLBACK");
       } catch {
       }
+      if (e instanceof DispatchConflict) throw e;
       this.failure = new Error(`outbox write failed; execution disabled: ${e.message}`);
       throw this.failure;
     }
@@ -5961,15 +6134,37 @@ var Spool = class {
     return this.get(turnId)?.terminal ?? false;
   }
   /** The intent is committed before any fork/spawn. False denotes an existing execution. */
-  register(turnId, runId, sessionId, nativeResourceKey) {
-    const prior = this.get(turnId);
-    if (prior) {
-      if (prior.runId !== runId) throw new Error(`turn ${turnId} already belongs to run ${prior.runId}`);
-      return false;
-    }
+  register(turnId, runId, sessionId, nativeResourceKey, requestHash) {
+    if (requestHash !== void 0 && !/^[a-f0-9]{64}$/.test(requestHash)) throw new Error("invalid dispatch digest");
     return this.write(() => {
+      const row = this.db.prepare("SELECT * FROM runs WHERE turn_id=? OR run_id=? LIMIT 1").get(turnId, runId);
+      if (row) {
+        const prior = this.record(row);
+        if (prior.turnId !== turnId || prior.runId !== runId || prior.sessionId !== sessionId || prior.nativeResourceKey !== nativeResourceKey) {
+          throw new DispatchConflict(prior.turnId, prior.runId, requestHash ?? null, "identity-changed");
+        }
+        if (requestHash !== void 0) {
+          const receipt = this.db.prepare("SELECT request_hash FROM dispatch_receipts WHERE run_id=?").get(runId);
+          if (!receipt) throw new DispatchConflict(turnId, runId, requestHash, "unverifiable-existing-run");
+          if (receipt.request_hash !== requestHash) throw new DispatchConflict(turnId, runId, requestHash, "payload-changed");
+        }
+        return false;
+      }
       this.db.prepare("INSERT INTO runs(run_id,turn_id,session_id,native_key,state,created_at) VALUES(?,?,?,?,?,?)").run(runId, turnId, sessionId, nativeResourceKey, "starting", Date.now());
+      if (requestHash !== void 0) this.db.prepare("INSERT INTO dispatch_receipts VALUES(?,?)").run(runId, requestHash);
       return true;
+    });
+  }
+  /** A conflicting replay is audit evidence, never a replacement result or start intent. */
+  auditDispatchConflict(conflict) {
+    if (conflict.incomingHash === null) return;
+    this.write(() => {
+      const inserted = this.db.prepare("INSERT OR IGNORE INTO dispatch_conflicts VALUES(?,?)").run(conflict.runId, conflict.incomingHash);
+      if (inserted.changes) this.appendTx(conflict.turnId, { type: "raw", data: {
+        type: "runner.dispatch_conflict",
+        reason: conflict.reason,
+        incomingHash: conflict.incomingHash
+      } });
     });
   }
   /** Bind old files to Hub identity and high-water BEFORE producing any restart event. */
@@ -5980,6 +6175,7 @@ var Spool = class {
         this.db.prepare("INSERT INTO runs(run_id,turn_id,session_id,native_key,state,next_rseq,acked_rseq,cancel_requested,created_at) VALUES(?,?,?,?,?,?,?,?,?)").run(remote.runId, remote.turnId, remote.sessionId, remote.nativeResourceKey, "recovering", remote.lastRseq + 1, remote.lastRseq, Number(remote.cancelRequested), Date.now());
       } else {
         if (!local.legacy && local.runId !== remote.runId) throw new Error("Hub/local run identity mismatch");
+        if (!local.legacy && (local.sessionId !== remote.sessionId || local.nativeResourceKey !== remote.nativeResourceKey)) throw new Error("Hub/local execution metadata mismatch");
         if (!local.legacy && remote.lastRseq > local.lastRseq) throw new Error("Hub high-water exceeds durable local high-water");
         if (!local.legacy && remote.lastRseq < local.ackedRseq) throw new Error("Hub high-water regressed below pruned ACK; recovery requires retained Hub data");
         this.db.prepare("UPDATE runs SET run_id=?,session_id=?,native_key=?,next_rseq=MAX(next_rseq,?),acked_rseq=MAX(acked_rseq,?),cancel_requested=MAX(cancel_requested,?),legacy=0 WHERE turn_id=?").run(remote.runId, remote.sessionId, remote.nativeResourceKey, remote.lastRseq + 1, remote.lastRseq, Number(remote.cancelRequested), remote.turnId);
@@ -5998,7 +6194,7 @@ var Spool = class {
   }
   requestCancel(turnId, runId) {
     this.write(() => {
-      this.db.prepare("UPDATE runs SET cancel_requested=1,state=CASE WHEN cleanup_confirmed=1 THEN state ELSE 'stopping' END WHERE turn_id=? AND run_id=? AND terminal=0").run(turnId, runId);
+      this.db.prepare("UPDATE runs SET cancel_requested=1,state=CASE WHEN cleanup_confirmed=1 OR state='unconfirmed' THEN state ELSE 'stopping' END WHERE turn_id=? AND run_id=? AND (terminal=0 OR cleanup_confirmed=0)").run(turnId, runId);
     });
   }
   release(turnId, runId, at, reason) {
