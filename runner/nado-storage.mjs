@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
-const VERSIONS = { hub: 29, runner: 4, openclaw: 1, 'native-storage':1 };
+const VERSIONS = { hub: 30, runner: 4, openclaw: 1, 'native-storage':1 };
 const TABLES = { hub: ['machines', 'sessions', 'turns', 'events'], runner: ['runs', 'outbox', 'imports'], openclaw: ['cursors', 'pending', 'seen', 'metadata'], 'native-storage':['directories'] };
 const quote = (name) => `"${name.replaceAll('"', '""')}"`;
 
@@ -26,7 +26,7 @@ function inspect(db, kind) {
     ...(version>=26?['agent_delegations']:[]),
     ...(version>=27?['agent_delegation_budget_holds']:[]),
     ...(version>=28?['agent_delegation_budget_terms','agent_delegation_budget_settlements']:[]),
-    ...(version>=29?['agent_delegation_requests']:[])] : kind === 'runner' && version >= 4
+    ...(version>=29?['agent_delegation_requests']:[]),...(version>=30?['task_interaction_origins','task_interaction_revisions']:[])] : kind === 'runner' && version >= 4
       ? [...TABLES.runner, 'dispatch_receipts', 'dispatch_conflicts'] : TABLES[kind];
   for (const table of required) {
     if (!tables.some((row) => row.name === table)) throw new Error(`not a recognized ${kind} database: missing ${table}`);

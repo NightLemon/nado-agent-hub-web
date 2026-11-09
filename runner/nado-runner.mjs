@@ -8035,6 +8035,94 @@ function catalogDefinition(entries, roots) {
   return JSON.stringify({ entries: definitions, roots: [...roots].sort((a, b) => a.rootId.localeCompare(b.rootId)) }, (_key, value) => value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
 }
 
+// packages/protocol/src/execution-feedback.ts
+var id7 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var ExecutionFeedbackSchema = external_exports.object({
+  version: external_exports.literal(1),
+  id: id7,
+  taskId: id7,
+  executionTaskId: id7,
+  planVersion: external_exports.number().int().positive(),
+  step: external_exports.number().int().positive(),
+  stepId: id7,
+  actionId: id7,
+  deviceId: id7,
+  operationId: id7,
+  sourceRevision: external_exports.number().int().positive(),
+  effect: external_exports.enum(["applied", "not_applied"]),
+  outcome: external_exports.literal("failed"),
+  closure: external_exports.literal("confirmed"),
+  diagnostic: external_exports.object({
+    code: external_exports.string().min(1).max(100),
+    summary: external_exports.string().min(1).max(300),
+    exitCode: external_exports.number().int().optional(),
+    stderr: external_exports.string().max(2048).optional()
+  }).strict(),
+  evidenceRef: external_exports.object({ kind: external_exports.literal("operation"), taskId: id7, operationId: id7, resultAvailable: external_exports.boolean() }).strict()
+}).strict();
+
+// packages/protocol/src/task-interaction.ts
+var id8 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var TaskSourceFeedbackSchema = external_exports.object({
+  version: external_exports.literal(1),
+  id: id8,
+  taskId: id8,
+  kind: external_exports.enum(["delegation", "model", "delivery"]),
+  source: external_exports.object({ kind: external_exports.enum(["delegation", "model", "delivery"]), id: id8, revision: external_exports.string().min(1).max(128) }).strict(),
+  outcome: external_exports.enum(["failed", "blocked", "unknown"]),
+  closure: external_exports.enum(["confirmed", "unconfirmed", "not_applicable"]),
+  diagnostic: external_exports.object({ code: external_exports.string().min(1).max(100), summary: external_exports.string().min(1).max(300), details: external_exports.string().max(2048).optional() }).strict(),
+  evidenceRef: external_exports.discriminatedUnion("kind", [
+    external_exports.object({ kind: external_exports.literal("delegation"), taskId: id8, delegationId: id8, childTaskId: id8.optional(), attemptId: id8.optional() }).strict(),
+    external_exports.object({ kind: external_exports.literal("model"), taskId: id8, callId: id8 }).strict(),
+    external_exports.object({ kind: external_exports.literal("delivery"), taskId: id8, operationId: id8, collectionId: id8.optional() }).strict()
+  ])
+}).strict();
+var TaskIncidentFeedbackSchema = external_exports.union([ExecutionFeedbackSchema, TaskSourceFeedbackSchema]);
+var TaskInteractionViewSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  taskId: id8,
+  revision: external_exports.number().int().nonnegative(),
+  snapshotSeq: external_exports.number().int().nonnegative(),
+  status: external_exports.string(),
+  phase: external_exports.enum(["planning", "correcting", "executing", "awaiting_approval", "waiting", "reconciling", "stopping", "delivering", "delivery_blocked", "succeeded", "failed", "canceled"]),
+  summary: external_exports.string(),
+  blockerSummary: external_exports.string().nullable(),
+  reason: external_exports.string().nullable(),
+  lastProgressAt: external_exports.number().int().nonnegative(),
+  currentAction: external_exports.object({ planVersion: external_exports.number().int().positive(), step: external_exports.number().int().positive(), actionId: id8, tool: external_exports.string(), deviceId: id8, status: external_exports.string() }).strict().nullable(),
+  resultSummary: external_exports.string().nullable(),
+  deliveryStates: external_exports.array(external_exports.object({ operationId: id8, state: external_exports.string(), sourceRevision: external_exports.string().min(1).max(128) }).strict()).optional(),
+  incidents: external_exports.array(external_exports.object({ id: id8, state: external_exports.enum(["active", "recovered"]), feedback: TaskIncidentFeedbackSchema }).strict()),
+  availableActions: external_exports.object({
+    cancel: external_exports.boolean(),
+    continue: external_exports.boolean(),
+    reply: external_exports.boolean(),
+    approvals: external_exports.array(external_exports.object({ version: external_exports.number().int().positive(), hash: external_exports.string() }).strict()),
+    deliveries: external_exports.array(external_exports.object({ operationId: id8, sourceRevision: external_exports.string().min(1).max(128), collectionId: id8.optional() }).strict()).default([]),
+    modelResolutions: external_exports.array(external_exports.object({ callId: id8 }).strict()).default([])
+  }).strict()
+}).strict();
+var decisionBase = { id: external_exports.string().min(1).max(512), taskId: id8, available: external_exports.boolean(), unavailableReason: external_exports.string().nullable(), deferExecution: external_exports.literal(false) };
+var InteractionDecisionSchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("plan_approval"), version: external_exports.number().int().positive(), hash: external_exports.string() }).strict(),
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("delegation_approval"), requestId: id8, hash: external_exports.string(), reason: external_exports.string() }).strict(),
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("budget"), expectedVersion: external_exports.number().int().nonnegative(), template: external_exports.string() }).strict(),
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("input"), turnId: id8, intent: external_exports.enum(["reply", "resume"]) }).strict(),
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("delivery"), operationId: id8, sourceRevision: external_exports.string(), collectionId: id8.optional() }).strict(),
+  external_exports.object({ ...decisionBase, kind: external_exports.literal("model_resolution"), callId: id8, acceptUnknown: external_exports.literal(true), noteMinLength: external_exports.literal(10), noteMaxLength: external_exports.literal(1e3) }).strict()
+]);
+var InteractionSemanticsSchema = external_exports.object({
+  policyVersion: external_exports.literal(1),
+  continuation: external_exports.enum(["advancing", "waiting_external", "waiting_user", "blocked", "terminal"]),
+  presentation: external_exports.enum(["status", "decision", "result"]),
+  reasonCode: external_exports.string(),
+  nextStep: external_exports.string().nullable(),
+  activity: external_exports.object({ lastObservedAt: external_exports.number().nonnegative(), lastMeaningfulProgressAt: external_exports.number().nonnegative().nullable() }).strict(),
+  decisions: external_exports.array(InteractionDecisionSchema)
+}).strict();
+var TaskInteractionV2Schema = external_exports.object({ schemaVersion: external_exports.literal(2), base: TaskInteractionViewSchema, semantics: InteractionSemanticsSchema }).strict();
+
 // packages/protocol/src/workspace.ts
 var InputRootSchema = external_exports.object({ id: external_exports.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), label: external_exports.string().min(1).max(100), generation: external_exports.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 var InputRefSchema = external_exports.object({
@@ -8134,7 +8222,7 @@ var NativeStorageReportSchema = external_exports.object({
 }).strict();
 
 // packages/protocol/src/delegation.ts
-var id7 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
+var id9 = external_exports.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/);
 var hash3 = external_exports.string().regex(/^[a-f0-9]{64}$/);
 var text = external_exports.string().trim().min(1).max(4e3);
 var unique = (items) => new Set(items).size === items.length;
@@ -8155,10 +8243,10 @@ var DelegationBudgetSchema = external_exports.object({
 }).strict();
 var DelegationContractSchema = external_exports.object({
   version: external_exports.literal(1),
-  id: id7,
-  parentTaskId: id7,
-  parentPlanId: id7.nullable(),
-  parentStepId: id7,
+  id: id9,
+  parentTaskId: id9,
+  parentPlanId: id9.nullable(),
+  parentStepId: id9,
   goal: text,
   workspace: external_exports.object({
     profile: external_exports.literal("workspace"),
@@ -8175,7 +8263,7 @@ var DelegationContractSchema = external_exports.object({
   publication: external_exports.object({ format: external_exports.literal("delegation-report-v1"), path: external_exports.literal("output/delegation-result.json") }).strict().optional(),
   budget: DelegationBudgetSchema,
   completion: external_exports.object({
-    requiredFindings: external_exports.array(id7).min(1).max(16).refine(unique, "duplicate finding"),
+    requiredFindings: external_exports.array(id9).min(1).max(16).refine(unique, "duplicate finding"),
     requireInputEvidence: external_exports.literal(true),
     criteria: external_exports.array(text).min(1).max(16)
   }).strict()
@@ -8188,15 +8276,15 @@ var DelegationContextSchema = external_exports.object({
   version: external_exports.literal(1),
   contract: DelegationContractSchema,
   inputHash: hash3,
-  machineId: id7,
-  attemptId: id7,
+  machineId: id9,
+  attemptId: id9,
   epoch: external_exports.number().int().positive()
 }).strict().refine(
   (context) => context.contract.workspace.inputRefs.every((ref) => ref.machineId === context.machineId),
   "delegation input device does not match execution device"
 );
 var DelegationEvidenceSchema = external_exports.object({
-  inputRefId: id7,
+  inputRefId: id9,
   sha256: hash3,
   locator: text
 }).strict();
@@ -8204,22 +8292,22 @@ var DelegationOutcomeSchema = external_exports.discriminatedUnion("status", [
   external_exports.object({
     status: external_exports.literal("completed"),
     summary: text,
-    findings: external_exports.array(external_exports.object({ key: id7, value: text, evidence: external_exports.array(DelegationEvidenceSchema).min(1).max(16) }).strict()).min(1).max(16)
+    findings: external_exports.array(external_exports.object({ key: id9, value: text, evidence: external_exports.array(DelegationEvidenceSchema).min(1).max(16) }).strict()).min(1).max(16)
   }).strict(),
   external_exports.object({ status: external_exports.literal("failed"), reason: external_exports.enum(["invalid-input", "runtime-error", "verification-failed", "budget-exhausted", "canceled"]), detail: text }).strict(),
   external_exports.object({ status: external_exports.literal("blocked"), reason: external_exports.enum(["missing-input", "permission-required", "runtime-unavailable"]), detail: text }).strict()
 ]);
 var DelegationResultSchema = external_exports.object({
   version: external_exports.literal(1),
-  delegationId: id7,
-  parentTaskId: id7,
-  childTaskId: id7,
+  delegationId: id9,
+  parentTaskId: id9,
+  childTaskId: id9,
   inputHash: hash3,
-  attemptId: id7,
+  attemptId: id9,
   epoch: external_exports.number().int().positive(),
-  turnId: id7,
-  runId: id7,
-  machineId: id7,
+  turnId: id9,
+  runId: id9,
+  machineId: id9,
   outcome: DelegationOutcomeSchema,
   artifactRefs: external_exports.array(external_exports.literal("output/delegation-result.json")).max(1).optional(),
   permissionRequest: external_exports.object({ kind: external_exports.literal("publish-report"), reason: text }).strict().optional()
@@ -8768,12 +8856,12 @@ var ComputeConfigSchema = external_exports.object({
 }).strict().refine((v) => !Object.hasOwn(v.commands, "python") && Object.keys(v.commands).length <= 15, "python is reserved; at most 15 extra commands");
 
 // packages/runner/src/operation-config.ts
-var id8 = external_exports.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
-var OperationServiceSchema = external_exports.object({ id: id8, url: external_exports.string().url(), semantics: external_exports.enum(["idempotent-queryable", "query-only", "unqueryable"]), actions: external_exports.array(OperationActionSchema).min(1).max(16).refine((a) => new Set(a.map((v) => v.name)).size === a.length, "duplicate operation action"), tokenEnv: external_exports.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), allowInsecureLoopback: external_exports.boolean().default(false), requestTimeoutMs: external_exports.number().int().min(100).max(1e4).default(3e3) }).strict().refine((s) => {
+var id10 = external_exports.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
+var OperationServiceSchema = external_exports.object({ id: id10, url: external_exports.string().url(), semantics: external_exports.enum(["idempotent-queryable", "query-only", "unqueryable"]), actions: external_exports.array(OperationActionSchema).min(1).max(16).refine((a) => new Set(a.map((v) => v.name)).size === a.length, "duplicate operation action"), tokenEnv: external_exports.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), allowInsecureLoopback: external_exports.boolean().default(false), requestTimeoutMs: external_exports.number().int().min(100).max(1e4).default(3e3) }).strict().refine((s) => {
   const u = new URL(s.url);
   return !u.username && !u.password && !u.search && !u.hash && (u.protocol === "https:" || s.allowInsecureLoopback && u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname));
 }, "operation service requires HTTPS or explicitly allowed loopback HTTP");
-var OperationArchiveRootSchema = external_exports.object({ id: id8, path: external_exports.string().refine(isAbsolute2), maxManagedBytes: external_exports.number().int().positive().default(1024 ** 3) }).strict();
+var OperationArchiveRootSchema = external_exports.object({ id: id10, path: external_exports.string().refine(isAbsolute2), maxManagedBytes: external_exports.number().int().positive().default(1024 ** 3) }).strict();
 var OperationsConfigSchema = external_exports.object({ enabled: external_exports.boolean().default(true), services: external_exports.array(OperationServiceSchema.refine((s) => Buffer.byteLength(JSON.stringify(s.actions)) <= 14e3, "service schemas exceed 14 KiB")).max(16).default([]), archiveRoots: external_exports.array(OperationArchiveRootSchema).max(16).default([]), workspaces: external_exports.array(ComputeConfigSchema).max(4).optional() }).strict().refine((v) => new Set(v.services.map((s) => s.id)).size === v.services.length && new Set(v.archiveRoots.map((s) => s.id)).size === v.archiveRoots.length && new Set((v.workspaces ?? []).map((s) => s.id)).size === (v.workspaces ?? []).length, "duplicate operation scope");
 
 // packages/runner/src/config.ts
@@ -9231,7 +9319,7 @@ var openclawAdapter = {
     };
   }
 };
-var shortId = (id9) => String(id9 ?? "").split("|")[0] || "tool";
+var shortId = (id11) => String(id11 ?? "").split("|")[0] || "tool";
 function textOf(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return asString(content);
@@ -9484,7 +9572,7 @@ var nativeAdapter = {
               terminal = { type: "turn.completed", finalText: event.answer.message };
               break;
             }
-            if (event.provider_closed !== true || !event.answer || typeof event.answer !== "object" || !Array.isArray(event.answer.candidate_device_ids) || !event.answer.candidate_device_ids.every((id9) => typeof id9 === "string") || !Array.isArray(event.answer.evidence_note_ids) || !event.answer.evidence_note_ids.every((id9) => typeof id9 === "string") || event.answer.availability_verified !== false || typeof event.answer.summary !== "string") {
+            if (event.provider_closed !== true || !event.answer || typeof event.answer !== "object" || !Array.isArray(event.answer.candidate_device_ids) || !event.answer.candidate_device_ids.every((id11) => typeof id11 === "string") || !Array.isArray(event.answer.evidence_note_ids) || !event.answer.evidence_note_ids.every((id11) => typeof id11 === "string") || event.answer.availability_verified !== false || typeof event.answer.summary !== "string") {
               broken = true;
               break;
             }
@@ -9792,9 +9880,9 @@ async function probeAdapters(configs, dependencies = defaultAdapterProbeDependen
             ...budgetsReady ? { nativeBudgetVersion: 1 } : {},
             ...deliveryReady ? { nativeDeliveryVersion: 1 } : {},
             ...recoveryReady ? { nativeRecoveryVersion: 1 } : {},
-            ...workspaceReady && cfg.workspace?.enabled ? { nativeWorkspace: { version: 1, trustedHost: cfg.workspace.allowTrustedHost, inputRoots: cfg.workspace.inputRoots.flatMap(({ id: id9, label, path }) => {
+            ...workspaceReady && cfg.workspace?.enabled ? { nativeWorkspace: { version: 1, trustedHost: cfg.workspace.allowTrustedHost, inputRoots: cfg.workspace.inputRoots.flatMap(({ id: id11, label, path }) => {
               try {
-                return [{ id: id9, label, generation: inputRootGeneration(path) }];
+                return [{ id: id11, label, generation: inputRootGeneration(path) }];
               } catch {
                 return [];
               }
@@ -9888,8 +9976,8 @@ var ModelServices = class {
     })();
     this.active.set(m.requestId, { controller, done });
   }
-  cancel(id9) {
-    this.active.get(id9)?.controller.abort();
+  cancel(id11) {
+    this.active.get(id11)?.controller.abort();
   }
   async stop() {
     for (const a of this.active.values()) a.controller.abort();
@@ -10250,7 +10338,8 @@ async function taskPath(root, relative7, create = false) {
       if (create) await privateDirectory(current);
       else {
         const st = await lstat3(current);
-        if (!st.isDirectory() || st.isSymbolicLink()) throw Error("unsafe task path");
+        if (st.isSymbolicLink()) throw Error("unsafe task path");
+        if (!st.isDirectory()) throw Object.assign(Error("task path component is not a directory"), { code: "ENOTDIR" });
       }
     } else {
       try {
@@ -11084,7 +11173,7 @@ var OpenclawStore = class {
       const cursor = this.get(batch.nativeKey);
       if (cursor.generation !== batch.target.generation) throw new Error("pending ACK generation mismatch");
       const insert = this.db.prepare("INSERT OR IGNORE INTO seen(native_key,generation,client_id) VALUES(?,?,?)");
-      for (const id9 of batch.target.clientIds) insert.run(batch.nativeKey, batch.target.generation, id9);
+      for (const id11 of batch.target.clientIds) insert.run(batch.nativeKey, batch.target.generation, id11);
       this.db.prepare("UPDATE cursors SET seq=MAX(seq,?),updated_at=?,last_disposition=? WHERE native_key=?").run(batch.target.seq, batch.target.updatedAt, disposition, batch.nativeKey);
       if (batch.target.resolvesBlock !== void 0 && batch.target.resolvesBlock === cursor.blocked) {
         this.db.prepare("UPDATE cursors SET blocked=NULL WHERE native_key=?").run(batch.nativeKey);
@@ -11761,9 +11850,9 @@ var ArtifactPublisher = class {
     }
     if (parsed.data.status !== "collecting") throw failure("invalid-request", "Hub did not confirm artifact collection start");
   }
-  rememberFinished(id9) {
+  rememberFinished(id11) {
     if (this.finished.size >= MAX_JOBS) this.finished.delete(this.finished.values().next().value);
-    this.finished.add(id9);
+    this.finished.add(id11);
   }
   async complete(job, warnings, error) {
     const detail = error && this.safeFailure(error);
@@ -12342,7 +12431,7 @@ var CatalogPublisher = class {
     }
     let delta = sameBase && previous.roots.every((r) => r.state === "complete") && observed.roots.every((r) => r.state === "complete");
     let entries = delta ? observed.entries.filter((e) => JSON.stringify(previous.entries.get(e.id)) !== JSON.stringify(e)) : observed.entries;
-    let deletedIds = delta ? [...previous.entries.keys()].filter((id9) => !map.has(id9)) : [];
+    let deletedIds = delta ? [...previous.entries.keys()].filter((id11) => !map.has(id11)) : [];
     if (entries.length + deletedIds.length > CATALOG_LIMITS.deviceEntries) {
       delta = false;
       entries = observed.entries;
@@ -13371,7 +13460,7 @@ var Runner = class {
     const workspace = msg.nativeContext?.workspace;
     if (session.adapter === "native" && msg.resources?.gpuIds.length && info.nativeResourceVersion !== 1) return fail("native runtime does not support assigned GPU resources");
     if (msg.resources && this.deps.info.resources && (msg.resources.cpuSlots > this.deps.info.resources.cpuSlots || msg.resources.memoryMiB > this.deps.info.resources.memoryMiB)) return fail("assigned resources exceed device capacity");
-    if (msg.resources?.gpuIds.length && (!this.deps.info.resources || this.deps.info.resources.gpuPolicy !== "exclusive" || msg.resources.gpuIds.some((id9) => !this.deps.info.resources.gpus.some((g) => g.id === id9)))) return fail("assigned GPU is unavailable on this device");
+    if (msg.resources?.gpuIds.length && (!this.deps.info.resources || this.deps.info.resources.gpuPolicy !== "exclusive" || msg.resources.gpuIds.some((id11) => !this.deps.info.resources.gpus.some((g) => g.id === id11)))) return fail("assigned GPU is unavailable on this device");
     if (workspace && (!cfg.workspace?.enabled || workspace.profile === "trusted-host" && (!cfg.workspace.allowTrustedHost || !workspace.trustedHostConsent))) return fail("workspace profile not permitted by device");
     const nativeExecution = workspace ? { controlDir: nativeControlDir(this.config.spoolDir, runId), config: cfg.workspace } : void 0;
     if (msg.nativeContext?.budget && !this.deps.adapters.some((a) => a.name === "native" && a.nativeBudgetVersion === 1)) return fail("runtime does not support persistent budgets");
